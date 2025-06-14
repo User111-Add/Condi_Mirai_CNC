@@ -9,6 +9,7 @@ from hikkatl.tl.functions.messages import SetTypingRequest
 from hikkatl.tl.types import SendMessageTypingAction
 from hikkatl.errors import ChatWriteForbiddenError, FloodWaitError
 import google.generativeai as genai
+from .. import loader, utils
 
 logger = logging.getLogger(__name__)
 
@@ -33,35 +34,84 @@ default_prompt = f"""
 - Твой характер: {random.choice(['добрый', 'игривый', 'застенчивый', 'саркастичный'])}
 """
 
-class GeminiGirlMod:  # loader.Module заменен на обычный класс
+@loader.tds
+class GeminiGirlMod(loader.Module):
     """Модуль виртуальной девушки на Gemini AI с расширенной памятью"""
-    
+    strings = {"name": "GeminiGirlPro"}
+
     def __init__(self):
-        self.name = "GeminiGirlPro"
         self.active_chats = set()
         self.all_chats_mode = False
         self.model = None
+        self.summarization_model = None
         self.blacklist = set()
         self.allowlist = set()
         self.chat_memory = {}
         self.initialized = False
-        self.summarization_model = None
         self._me = None
-        self._client = None
         
-        # Конфигурация
-        self.config = {
-            "GEMINI_API_KEY": None,
-            "DEFAULT_PROMPT": default_prompt,
-            "AUTO_PM": True,
-            "GROUP_MENTION": True,
-            "GROUP_REPLY": True,
-            "REQUIRE_ALLOW_LIST": False,
-            "MEMORY_DEPTH": 50,
-            "TYPING_DELAY": 1.5,
-            "MAX_TOKENS": 2000,
-            "AUTO_SUMMARIZE": True
-        }
+        self.config = loader.ModuleConfig(
+            loader.ConfigValue(
+                "GEMINI_API_KEY",
+                None,
+                "API ключ Gemini",
+                validator=loader.validators.String()
+            ),
+            loader.ConfigValue(
+                "DEFAULT_PROMPT",
+                default_prompt,
+                "Системный промт",
+                validator=loader.validators.String()
+            ),
+            loader.ConfigValue(
+                "AUTO_PM",
+                True,
+                "Автоответ в ЛС",
+                validator=loader.validators.Boolean()
+            ),
+            loader.ConfigValue(
+                "GROUP_MENTION",
+                True,
+                "Отвечать на упоминания в группах",
+                validator=loader.validators.Boolean()
+            ),
+            loader.ConfigValue(
+                "GROUP_REPLY",
+                True,
+                "Отвечать на реплаи в группах",
+                validator=loader.validators.Boolean()
+            ),
+            loader.ConfigValue(
+                "REQUIRE_ALLOW_LIST",
+                False,
+                "Только белый список",
+                validator=loader.validators.Boolean()
+            ),
+            loader.ConfigValue(
+                "MEMORY_DEPTH",
+                50,
+                "Глубина памяти диалога",
+                validator=loader.validators.Integer(minimum=10, maximum=1000)
+            ),
+            loader.ConfigValue(
+                "TYPING_DELAY",
+                1.5,
+                "Задержка индикатора набора",
+                validator=loader.validators.Float(minimum=0.1, maximum=5.0)
+            ),
+            loader.ConfigValue(
+                "MAX_TOKENS",
+                2000,
+                "Максимальное количество токенов",
+                validator=loader.validators.Integer(minimum=500, maximum=8192)
+            ),
+            loader.ConfigValue(
+                "AUTO_SUMMARIZE",
+                True,
+                "Автосуммаризация длинных диалогов",
+                validator=loader.validators.Boolean()
+            )
+        )
 
     async def client_ready(self, client, db):
         self._db = db
@@ -70,7 +120,6 @@ class GeminiGirlMod:  # loader.Module заменен на обычный кла�
         await self.init_gemini()
 
     async def init_gemini(self):
-        """Инициализация Gemini API"""
         try:
             if not self.config["GEMINI_API_KEY"]:
                 logger.warning("API ключ Gemini не установлен!")
@@ -104,7 +153,6 @@ class GeminiGirlMod:  # loader.Module заменен на обычный кла�
             return False
 
     async def summarize_context(self, chat_id):
-        """Суммаризация длинного контекста"""
         try:
             history = self.chat_memory.get(chat_id, [])
             if not history:
@@ -133,7 +181,6 @@ class GeminiGirlMod:  # loader.Module заменен на обычный кла�
             return False
 
     async def generate_response(self, message: Message):
-        """Генерация ответа через Gemini с расширенной памятью"""
         try:
             if not self.initialized:
                 if not await self.init_gemini():
@@ -183,16 +230,11 @@ class GeminiGirlMod:  # loader.Module заменен на обычный кла�
             
             # Адаптивная обрезка длинных сообщений
             if len(response_text) > 3500:
-                # Находим последнюю точку перед 3500 символами
                 cutoff = response_text.rfind('.', 0, 3500)
-                if cutoff == -1:
-                    cutoff = response_text.rfind('!', 0, 3500)
-                if cutoff == -1:
-                    cutoff = response_text.rfind('?', 0, 3500)
-                if cutoff == -1:
-                    cutoff = response_text.rfind('\n', 0, 3500)
-                if cutoff == -1:
-                    cutoff = 3500
+                if cutoff == -1: cutoff = response_text.rfind('!', 0, 3500)
+                if cutoff == -1: cutoff = response_text.rfind('?', 0, 3500)
+                if cutoff == -1: cutoff = response_text.rfind('\n', 0, 3500)
+                if cutoff == -1: cutoff = 3500
                 response_text = response_text[:cutoff + 1] + " [сообщение сокращено]"
             
             # Сохраняем в память
@@ -240,18 +282,13 @@ class GeminiGirlMod:  # loader.Module заменен на обычный кла�
             return False
 
     async def send_long_message(self, message: Message, text: str):
-        """Отправка длинных сообщений с разбивкой без hikkatl.utils"""
         try:
-            # Разбиваем текст на части по 4000 символов
             parts = []
             while text:
                 if len(text) > 4000:
-                    # Находим последний перенос строки или пробел до 4000 символа
                     pos = text.rfind('\n', 0, 4000)
-                    if pos == -1:
-                        pos = text.rfind(' ', 0, 4000)
-                    if pos == -1:
-                        pos = 4000
+                    if pos == -1: pos = text.rfind(' ', 0, 4000)
+                    if pos == -1: pos = 4000
                     parts.append(text[:pos])
                     text = text[pos:]
                 else:
@@ -262,216 +299,218 @@ class GeminiGirlMod:  # loader.Module заменен на обычный кла�
                 await message.reply(part)
                 await asyncio.sleep(0.5)
         except Exception as e:
-            logger.error(f"Ошибка отправки длинного сообщения: {str(e)}")
+            logger.error(f"Ошибка отправки сообщения: {str(e)}")
             await message.reply(text[:4000] + " [...]")
 
-    # Командный обработчик
-    async def handle_command(self, message: Message):
-        """Обработчик команд без hikkatl.utils"""
-        command = message.text.split()[0][1:]
-        
-        if command == "girlon":
-            self.active_chats.add(message.chat_id)
-            await message.reply("✅ <b>Режим активирован в этом чате!</b>")
-            
-        elif command == "girloff":
-            self.active_chats.discard(message.chat_id)
-            await message.reply("🚫 <b>Режим деактивирован</b>")
-            
-        elif command == "girlall":
-            self.all_chats_mode = not self.all_chats_mode
-            status = "🌐 <b>Режим активирован ВЕЗДЕ</b>" if self.all_chats_mode else "🌑 <b>Режим отключен во всех чатах</b>"
-            await message.reply(status)
-            
-        elif command == "girlstatus":
-            memory_info = "\n".join([
-                f"• Чат {chat_id}: {len(history)} сообщений"
-                for chat_id, history in self.chat_memory.items()
-            ]) or "• Память пуста"
-            
-            status = (
-                f"• Активированные чаты: {len(self.active_chats)}\n"
-                f"• Режим 'ВЕЗДЕ': {'✅' if self.all_chats_mode else '❌'}\n"
-                f"• Gemini инициализирован: {'✅' if self.initialized else '❌'}\n"
-                f"• Глубина памяти: {self.config['MEMORY_DEPTH']} сообщений\n"
-                f"• Автосуммаризация: {'✅' if self.config['AUTO_SUMMARIZE'] else '❌'}\n"
-                f"• Макс. токенов: {self.config['MAX_TOKENS']}\n\n"
-                f"<b>Использование памяти:</b>\n{memory_info}"
-            )
-            await message.reply(f"🔧 <b>Статус модуля:</b>\n{status}")
-            
-        elif command == "clearmem":
-            chat_id = message.chat_id
-            if chat_id in self.chat_memory:
-                del self.chat_memory[chat_id]
-            await message.reply("🧹 <b>Память очищена в чате!</b>")
-            
-        elif command == "summarize":
-            chat_id = message.chat_id
-            if await self.summarize_context(chat_id):
-                await message.reply("📝 <b>Контекст суммирован!</b>")
-            else:
-                await message.reply("❌ Не удалось суммаризировать контекст")
-                
-        elif command == "allowadd":
-            args = message.text.split()
-            if len(args) < 2:
-                await message.reply("❌ Укажите ID пользователя")
-                return
-            try:
-                user_id = int(args[1])
-                self.allowlist.add(user_id)
-                await message.reply(f"✅ <b>Добавлен в белый список:</b> {user_id}")
-            except:
-                await message.reply("❌ Неверный ID")
-                
-        elif command == "allowremove":
-            args = message.text.split()
-            if len(args) < 2:
-                await message.reply("❌ Укажите ID пользователя")
-                return
-            try:
-                user_id = int(args[1])
-                if user_id in self.allowlist:
-                    self.allowlist.remove(user_id)
-                    await message.reply(f"❌ <b>Удалён из белого списка:</b> {user_id}")
-                else:
-                    await message.reply("❌ Пользователь не найден в списке")
-            except:
-                await message.reply("❌ Неверный ID")
-                
-        elif command == "blockadd":
-            args = message.text.split()
-            if len(args) < 2:
-                await message.reply("❌ Укажите ID пользователя")
-                return
-            try:
-                user_id = int(args[1])
-                self.blacklist.add(user_id)
-                if user_id in self.allowlist:
-                    self.allowlist.remove(user_id)
-                await message.reply(f"🚫 <b>Добавлен в чёрный список:</b> {user_id}")
-            except:
-                await message.reply("❌ Неверный ID")
-                
-        elif command == "blockremove":
-            args = message.text.split()
-            if len(args) < 2:
-                await message.reply("❌ Укажите ID пользователя")
-                return
-            try:
-                user_id = int(args[1])
-                if user_id in self.blacklist:
-                    self.blacklist.remove(user_id)
-                    await message.reply(f"🟢 <b>Удалён из чёрного списка:</b> {user_id}")
-                else:
-                    await message.reply("❌ Пользователь не найден в списке")
-            except:
-                await message.reply("❌ Неверный ID")
-                
-        elif command == "allowlist":
-            if not self.allowlist:
-                await message.reply("📃 Белый список пуст")
-                return
-            users = "\n".join([f"• {uid}" for uid in self.allowlist])
-            await message.reply(f"📃 <b>Белый список:</b>\n{users}")
-            
-        elif command == "blocklist":
-            if not self.blacklist:
-                await message.reply("📋 Чёрный список пуст")
-                return
-            users = "\n".join([f"• {uid}" for uid in self.blacklist])
-            await message.reply(f"📋 <b>Чёрный список:</b>\n{users}")
-            
-        elif command == "debugme":
-            try:
-                is_admin = await self.is_admin(message.chat_id)
-                user_allowed = self.is_user_allowed(message.sender_id)
-                
-                info = (
-                    f"• Ваш ID: <code>{message.sender_id}</code>\n"
-                    f"• ID чата: <code>{message.chat_id}</code>\n"
-                    f"• Режим чата: {'личка' if message.is_private else 'группа'}\n"
-                    f"• Чат активен: {'✅' if self.is_chat_active(message.chat_id) else '❌'}\n"
-                    f"• Права бота: {'✅ админ' if is_admin else '❌ недостаточно прав'}\n"
-                    f"• Вы в белом списке: {'✅' if message.sender_id in self.allowlist else '❌'}\n"
-                    f"• Вы в чёрном списке: {'❌' if message.sender_id in self.blacklist else '✅'}\n"
-                    f"• Доступ разрешён: {'✅' if user_allowed else '❌'}\n"
-                    f"• Gemini инициализирован: {'✅' if self.initialized else '❌'}"
-                )
-                
-                await message.reply(f"🛠️ <b>Диагностика:</b>\n{info}")
-            except Exception as e:
-                logger.exception("Ошибка диагностики")
-                await message.reply(f"❌ Ошибка диагностики: {str(e)}")
-                
-        elif command == "setkey":
-            args = message.text.split(maxsplit=1)
-            if len(args) < 2:
-                await message.reply("❌ Укажите API ключ")
-                return
-            self.config["GEMINI_API_KEY"] = args[1]
-            await self.init_gemini()
-            await message.reply("✅ API ключ успешно установлен")
+    @loader.command()
+    async def girlon(self, message: Message):
+        """Активировать в текущем чате"""
+        self.active_chats.add(message.chat_id)
+        await message.reply("✅ <b>Режим активирован в этом чате!</b>")
 
-    # Универсальный обработчик сообщений
-    async def handle_message(self, message: Message):
-        """Обработчик всех сообщений"""
+    @loader.command()
+    async def girloff(self, message: Message):
+        """Деактивировать в текущем чате"""
+        self.active_chats.discard(message.chat_id)
+        await message.reply("🚫 <b>Режим деактивирован</b>")
+
+    @loader.command()
+    async def girlall(self, message: Message):
+        """Активировать/деактивировать ВЕЗДЕ"""
+        self.all_chats_mode = not self.all_chats_mode
+        status = "🌐 <b>Режим активирован ВЕЗДЕ</b>" if self.all_chats_mode else "🌑 <b>Режим отключен во всех чатах</b>"
+        await message.reply(status)
+
+    @loader.command()
+    async def girlstatus(self, message: Message):
+        """Показать статус модуля"""
+        memory_info = "\n".join([
+            f"• Чат {chat_id}: {len(history)} сообщений"
+            for chat_id, history in self.chat_memory.items()
+        ]) or "• Память пуста"
+        
+        status = (
+            f"• Активированные чаты: {len(self.active_chats)}\n"
+            f"• Режим 'ВЕЗДЕ': {'✅' if self.all_chats_mode else '❌'}\n"
+            f"• Gemini инициализирован: {'✅' if self.initialized else '❌'}\n"
+            f"• Глубина памяти: {self.config['MEMORY_DEPTH']} сообщений\n"
+            f"• Автосуммаризация: {'✅' if self.config['AUTO_SUMMARIZE'] else '❌'}\n"
+            f"• Макс. токенов: {self.config['MAX_TOKENS']}\n\n"
+            f"<b>Использование памяти:</b>\n{memory_info}"
+        )
+        await message.reply(f"🔧 <b>Статус модуля:</b>\n{status}")
+        
+    @loader.command()
+    async def clearmem(self, message: Message):
+        """Очистить память в текущем чате"""
+        chat_id = message.chat_id
+        if chat_id in self.chat_memory:
+            del self.chat_memory[chat_id]
+        await message.reply("🧹 <b>Память очищена в чате!</b>")
+        
+    @loader.command()
+    async def summarize(self, message: Message):
+        """Суммаризировать историю диалога"""
+        chat_id = message.chat_id
+        if await self.summarize_context(chat_id):
+            await message.reply("📝 <b>Контекст суммирован!</b>")
+        else:
+            await message.reply("❌ Не удалось суммаризировать контекст")
+            
+    @loader.command()
+    async def allowadd(self, message: Message):
+        """Добавить пользователя в белый список"""
+        args = utils.get_args_raw(message)
+        if not args:
+            await message.reply("❌ Укажите ID пользователя")
+            return
         try:
-            # Обработка команд
-            if message.text and message.text.startswith('.'):
-                await self.handle_command(message)
+            user_id = int(args)
+            self.allowlist.add(user_id)
+            await message.reply(f"✅ <b>Добавлен в белый список:</b> {user_id}")
+        except:
+            await message.reply("❌ Неверный ID")
+            
+    @loader.command()
+    async def allowremove(self, message: Message):
+        """Удалить пользователя из белого списка"""
+        args = utils.get_args_raw(message)
+        if not args:
+            await message.reply("❌ Укажите ID пользователя")
+            return
+        try:
+            user_id = int(args)
+            if user_id in self.allowlist:
+                self.allowlist.remove(user_id)
+                await message.reply(f"❌ <b>Удалён из белого списка:</b> {user_id}")
+            else:
+                await message.reply("❌ Пользователь не найден в списке")
+        except:
+            await message.reply("❌ Неверный ID")
+            
+    @loader.command()
+    async def blockadd(self, message: Message):
+        """Добавить пользователя в чёрный список"""
+        args = utils.get_args_raw(message)
+        if not args:
+            await message.reply("❌ Укажите ID пользователя")
+            return
+        try:
+            user_id = int(args)
+            self.blacklist.add(user_id)
+            if user_id in self.allowlist:
+                self.allowlist.remove(user_id)
+            await message.reply(f"🚫 <b>Добавлен в чёрный список:</b> {user_id}")
+        except:
+            await message.reply("❌ Неверный ID")
+            
+    @loader.command()
+    async def blockremove(self, message: Message):
+        """Удалить пользователя из чёрного списка"""
+        args = utils.get_args_raw(message)
+        if not args:
+            await message.reply("❌ Укажите ID пользователя")
+            return
+        try:
+            user_id = int(args)
+            if user_id in self.blacklist:
+                self.blacklist.remove(user_id)
+                await message.reply(f"🟢 <b>Удалён из чёрного списка:</b> {user_id}")
+            else:
+                await message.reply("❌ Пользователь не найден в списке")
+        except:
+            await message.reply("❌ Неверный ID")
+            
+    @loader.command()
+    async def allowlist(self, message: Message):
+        """Показать белый список"""
+        if not self.allowlist:
+            await message.reply("📃 Белый список пуст")
+            return
+        users = "\n".join([f"• {uid}" for uid in self.allowlist])
+        await message.reply(f"📃 <b>Белый список:</b>\n{users}")
+        
+    @loader.command()
+    async def blocklist(self, message: Message):
+        """Показать чёрный список"""
+        if not self.blacklist:
+            await message.reply("📋 Чёрный список пуст")
+            return
+        users = "\n".join([f"• {uid}" for uid in self.blacklist])
+        await message.reply(f"📋 <b>Чёрный список:</b>\n{users}")
+        
+    @loader.command()
+    async def debugme(self, message: Message):
+        """Диагностика доступности"""
+        try:
+            is_admin = await self.is_admin(message.chat_id)
+            user_allowed = self.is_user_allowed(message.sender_id)
+            
+            info = (
+                f"• Ваш ID: <code>{message.sender_id}</code>\n"
+                f"• ID чата: <code>{message.chat_id}</code>\n"
+                f"• Режим чата: {'личка' if message.is_private else 'группа'}\n"
+                f"• Чат активен: {'✅' if self.is_chat_active(message.chat_id) else '❌'}\n"
+                f"• Права бота: {'✅ админ' if is_admin else '❌ недостаточно прав'}\n"
+                f"• Вы в белом списке: {'✅' if message.sender_id in self.allowlist else '❌'}\n"
+                f"• Вы в чёрном списке: {'❌' if message.sender_id in self.blacklist else '✅'}\n"
+                f"• Доступ разрешён: {'✅' if user_allowed else '❌'}\n"
+                f"• Gemini инициализирован: {'✅' if self.initialized else '❌'}"
+            )
+            
+            await message.reply(f"🛠️ <b>Диагностика:</b>\n{info}")
+        except Exception as e:
+            logger.exception("Ошибка диагностики")
+            await message.reply(f"❌ Ошибка диагностики: {str(e)}")
+            
+    @loader.command()
+    async def setkey(self, message: Message):
+        """Установить API ключ"""
+        args = utils.get_args_raw(message)
+        if not args:
+            await message.reply("❌ Укажите API ключ")
+            return
+        self.config["GEMINI_API_KEY"] = args
+        await self.init_gemini()
+        await message.reply("✅ API ключ успешно установлен")
+
+    @loader.watcher()
+    async def watcher(self, message: Message):
+        try:
+            if message.out or not message.text or message.sender_id == self._me.id:
                 return
             
-            # Пропускаем служебные сообщения
-            if message.out or not message.text or not hasattr(message, 'sender_id') or message.sender_id == self._me.id:
-                return
-            
-            # Основные переменные
             chat_id = message.chat_id
             user_id = message.sender_id
             is_private = message.is_private
             
-            # Проверка доступа пользователя
             if not self.is_user_allowed(user_id):
-                logger.debug(f"Пропуск: пользователь {user_id} не имеет доступа")
                 return
-            
-            # Проверка активности чата
+                
             if not self.is_chat_active(chat_id):
-                logger.debug(f"Пропуск: чат {chat_id} не активен")
                 return
-            
-            # Проверка прав бота в чате
+                
             if not is_private and not await self.is_admin(chat_id):
-                logger.warning(f"Пропуск: недостаточно прав в чате {chat_id}")
                 return
-            
-            # Проверяем условия ответа
+                
             should_reply = False
             
-            # 1. Личные сообщения
             if is_private and self.config["AUTO_PM"]:
                 should_reply = True
             
-            # 2. Групповые чаты
             elif not is_private:
-                # Проверка упоминаний
                 if self.config["GROUP_MENTION"] and self._me.username:
                     if f"@{self._me.username}" in message.text:
                         should_reply = True
                     elif str(self._me.id) in message.text:
                         should_reply = True
                 
-                # Проверка реплаев
                 if not should_reply and self.config["GROUP_REPLY"] and message.reply_to_msg_id:
                     reply_msg = await message.get_reply_message()
                     if reply_msg.sender_id == self._me.id:
                         should_reply = True
             
-            # Генерация и отправка ответа
             if should_reply:
-                logger.info(f"Обработка сообщения от {user_id}")
                 response = await self.generate_response(message)
                 await self.send_long_message(message, response)
                 
@@ -479,12 +518,5 @@ class GeminiGirlMod:  # loader.Module заменен на обычный кла�
             logger.warning(f"Нет прав на отправку в чате {chat_id}")
         except FloodWaitError as e:
             logger.warning(f"Ошибка флуда: {e.seconds} сек")
-            await asyncio.sleep(e.seconds)
         except Exception as e:
             logger.exception("Ошибка обработки сообщения")
-
-# Регистрация модуля (примерная, зависит от вашей системы загрузки)
-def register(core):
-    module = GeminiGirlMod()
-    core.register_module(module)
-    core.add_event_handler(module.handle_message)
