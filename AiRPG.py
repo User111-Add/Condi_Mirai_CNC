@@ -314,7 +314,6 @@ class AIModule(loader.Module):
                 emoji=character['emoji'],
                 name=character['name'],
                 surname=character['surname'],
-                patronexplore = True
                 patronymic=character['patronymic'],
                 trait=character['trait'],
                 country=character['country'],
@@ -480,4 +479,4 @@ class AIModule(loader.Module):
             f"[{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}]\n\n"
             f"{response}\n\n"
             f"[Субтитры: {subtitle}]"
-        )
+            )
