@@ -180,7 +180,7 @@ class GeminiGirlMod(loader.Module):
             logger.error(f"Ошибка суммаризации: {str(e)}")
             return False
 
-    async def generate_response(self, message: Message):
+    async def generate_response(self, message: Message, direct_query: str = None):
         try:
             if not self.initialized:
                 if not await self.init_gemini():
@@ -191,33 +191,41 @@ class GeminiGirlMod(loader.Module):
             user = await self._client.get_entity(user_id)
             user_name = user.first_name
             
-            history = self.chat_memory.get(chat_id, [])
-            
-            if self.config["AUTO_SUMMARIZE"] and len(history) > self.config["MEMORY_DEPTH"] * 1.5:
-                await self.summarize_context(chat_id)
+            # Для прямых запросов (.ask) используем только системный промпт
+            if direct_query:
+                context_messages = [{
+                    "role": "user",
+                    "parts": [self.config["DEFAULT_PROMPT"] + f"\n\nЗапрос: {direct_query}"]
+                }]
+            else:
+                # Для обычных сообщений используем полную историю
                 history = self.chat_memory.get(chat_id, [])
-            
-            context_messages = []
-            
-            context_messages.append({
-                "role": "user",
-                "parts": [self.config["DEFAULT_PROMPT"]]
-            })
-            context_messages.append({
-                "role": "model",
-                "parts": ["Хорошо, я поняла контекст и готова к общению!"]
-            })
-            
-            for msg in history[-self.config["MEMORY_DEPTH"]:]:
+                
+                if self.config["AUTO_SUMMARIZE"] and len(history) > self.config["MEMORY_DEPTH"] * 1.5:
+                    await self.summarize_context(chat_id)
+                    history = self.chat_memory.get(chat_id, [])
+                
+                context_messages = []
+                
                 context_messages.append({
-                    "role": "user" if msg["role"] == "user" else "model",
-                    "parts": [msg["content"]]
+                    "role": "user",
+                    "parts": [self.config["DEFAULT_PROMPT"]]
                 })
-            
-            context_messages.append({
-                "role": "user",
-                "parts": [f"{user_name}: {message.text}"]
-            })
+                context_messages.append({
+                    "role": "model",
+                    "parts": ["Хорошо, я поняла контекст и готова к общению!"]
+                })
+                
+                for msg in history[-self.config["MEMORY_DEPTH"]:]:
+                    context_messages.append({
+                        "role": "user" if msg["role"] == "user" else "model",
+                        "parts": [msg["content"]]
+                    })
+                
+                context_messages.append({
+                    "role": "user",
+                    "parts": [f"{user_name}: {message.text}"]
+                })
             
             await asyncio.sleep(self.config["TYPING_DELAY"])
             await self._client(SetTypingRequest(
@@ -237,15 +245,16 @@ class GeminiGirlMod(loader.Module):
                 if cutoff == -1: cutoff = 3500
                 response_text = response_text[:cutoff + 1] + " [сообщение сокращено]"
             
-            # Сохраняем в память
-            self.chat_memory.setdefault(chat_id, []).append({
-                "role": "user",
-                "content": f"{user_name}: {message.text}"
-            })
-            self.chat_memory[chat_id].append({
-                "role": "model",
-                "content": response_text
-            })
+            # Сохраняем в память только обычные сообщения, не .ask
+            if not direct_query:
+                self.chat_memory.setdefault(chat_id, []).append({
+                    "role": "user",
+                    "content": f"{user_name}: {message.text}"
+                })
+                self.chat_memory[chat_id].append({
+                    "role": "model",
+                    "content": response_text
+                })
             
             emoji = random.choice(["👩", "👩‍🦰", "💃", "👸", "👧", "👱‍♀️"])
             name = generate_name()
@@ -473,6 +482,29 @@ class GeminiGirlMod(loader.Module):
         self.config["GEMINI_API_KEY"] = args
         await self.init_gemini()
         await message.reply("✅ API ключ успешно установлен")
+        
+    @loader.command()
+    async def ask(self, message: Message):
+        """Задать прямой вопрос ИИ (без истории)"""
+        # Проверка активности чата
+        if not self.is_chat_active(message.chat_id):
+            await message.reply("❌ Модуль не активирован в этом чате. Используйте .girlon")
+            return
+            
+        # Проверка прав пользователя
+        if not self.is_user_allowed(message.sender_id):
+            await message.reply("⛔ У вас нет доступа к этой команде!")
+            return
+            
+        # Получение запроса
+        args = utils.get_args_raw(message)
+        if not args:
+            await message.reply("❌ Укажите текст вопроса после команды")
+            return
+            
+        # Генерация ответа
+        response = await self.generate_response(message, direct_query=args)
+        await self.send_long_message(message, response)
 
     @loader.watcher()
     async def watcher(self, message: Message):
