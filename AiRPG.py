@@ -12,7 +12,7 @@ try:
 except ImportError:
     logger.error("Google Generative AI not installed! Installing...")
     import os
-    os.system("pip install google-generativeai")
+    os.system("pip install -q google-generativeai")
     import google.generativeai as genai
 
 # Конфигурация Gemini AI
@@ -98,7 +98,7 @@ class AIModule(loader.Module):
 
     async def generate_response(self, chat_id, prompt):
         memory = self.chat_memory.get(str(chat_id), [])
-        messages = [{"role": msg["role"], "parts": [{"text": msg["content"]}] for msg in memory]
+        messages = [{"role": msg["role"], "parts": [{"text": msg["content"]}]} for msg in memory]
         messages.append({"role": "user", "parts": [{"text": prompt}]})
         
         try:
