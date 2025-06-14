@@ -6,9 +6,11 @@ import google.generativeai as genai
 from .. import loader, utils
 from ..inline.types import InlineCall
 
-# Настройка логирования                                     logging.basicConfig(level=logging.INFO)
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
 logging.getLogger("hikkatl.network").setLevel(logging.WARNING)
-                                                            # Конфигурация Gemini AI
+
+# Конфигурация Gemini AI
 GEMINI_API_KEY = "AIzaSyBDB9kaZ-VF3zT_NZO1WoW2YFlxtAHtcTI"  # Замените на ваш ключ
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-2.0-flash")
@@ -43,7 +45,7 @@ class AIModule(loader.Module):
         self.config = loader.ModuleConfig(
             loader.ConfigValue(
                 "gemini_api_key",
-                GEMINI_API_KEY = AIzaSyBDB9kaZ-VF3zT_NZO1WoW2YFlxtAHtcTI
+                GEMINI_API_KEY,
                 "API ключ для Gemini AI",
                 validator=loader.validators.String()
             )
@@ -53,7 +55,7 @@ class AIModule(loader.Module):
         self.characters = self.db.get(self.name, "characters", {})
         self.chat_memory = self.db.get(self.name, "chat_memory", {})
         self.emojis = [
-            "👧", "👧🏻", "👧🏼", "👧🏽", "👧🏾", "👧🏿", " 👩", "👩🏻", "👩🏼", "👩🏽", "👩🏾", "👩🏿",
+            "👧", "👧🏻", "👧🏼", "👧🏽", "👧🏾", "👧🏿", "👩", "👩🏻", "👩🏼", "👩🏽", "👩🏾", "👩🏿",
             "👱‍♀️", "👱🏻‍♀️", "👱🏼‍♀️", "👱🏽‍♀️", "👱🏾‍♀️", "👱🏿‍♀️"
         ]
         self.good_traits = [
@@ -94,12 +96,12 @@ class AIModule(loader.Module):
 
     async def generate_response(self, chat_id, prompt):
         memory = self.chat_memory.get(str(chat_id), [])
-        messages = [{"role": msg["role"], "parts": [{"text": msg["content"}]}] for msg in memory]
+        messages = [{"role": msg["role"], "parts": [{"text": msg["content"]}]} for msg in memory]
         messages.append({"role": "user", "parts": [{"text": prompt}]})
-
+        
         response = await model.generate_content_async(messages)
         message_content = response.text
-
+        
         self.chat_memory.setdefault(str(chat_id), []).append({"role": "user", "content": prompt})
         self.chat_memory[str(chat_id)].append({"role": "model", "content": message_content})
         self.db.set(self.name, "chat_memory", self.chat_memory)
