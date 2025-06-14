@@ -443,8 +443,16 @@ class AIModule(loader.Module):
         return message_content
 
     def generate_random_character(self, gender):
-        emoji = random.choice(self.emojis) if gender == "female" else random.choice(["🧑", "🧑🏻", "🧑🏼", "🧑🏽", "🧑🏾", "🧑🏿"])
-        name = random.choice(self.female_names) if gender == "female" else random.choice(self.male_names)
+        # Стандартизируем входной пол
+        gender_map = {
+            'female': 'female',
+            'male': 'male',
+            'Женский Пол': 'female',
+            'Мужской Пол': 'male'
+        }
+        standardized_gender = gender_map.get(gender, random.choice(['female', 'male']))  # Fallback to random
+        emoji = random.choice(self.emojis) if standardized_gender == "female" else random.choice(["🧑", "🧑🏻", "🧑🏼", "🧑🏽", "🧑🏾", "🧑🏿"])
+        name = random.choice(self.female_names) if standardized_gender == "female" else random.choice(self.male_names)
         surname = random.choice(self.surnames)
         patronymic = random.choice(self.patronymics)
         trait = random.choice(self.good_traits + self.evil_traits if random.random() < 0.9 else self.evil_traits)
@@ -460,7 +468,7 @@ class AIModule(loader.Module):
             "country": country,
             "age": age,
             "balance": balance,
-            "gender": gender,
+            "gender": standardized_gender,
             "alive": True
         }
 
@@ -510,7 +518,15 @@ class AIModule(loader.Module):
         )
 
     async def set_gender(self, call: InlineCall, gender, chat_id):
-        self.characters[chat_id] = {"gender": gender}
+        # Стандартизируем значения пола
+        gender_map = {
+            'female': 'female',
+            'male': 'male',
+            'Женский Пол': 'female',
+            'Мужской Пол': 'male'
+        }
+        standardized_gender = gender_map.get(gender, 'female')  # Fallback to 'female' if invalid
+        self.characters[chat_id] = {"gender": standardized_gender}
         await call.edit(
             "Пол выбран! Теперь выбери параметры:",
             reply_markup=[
@@ -619,6 +635,20 @@ class AIModule(loader.Module):
         season = random.choice(["Лето", "Осень", "Зима", "Весна"])
         day_cycle = self.get_day_cycle()
 
+        # Маппинг значений пола для обработки возможных ошибок
+        gender_map = {
+            'female': 'девушка',
+            'male': 'парень',
+            'Женский Пол': 'девушка',
+            'Мужской Пол': 'парень'
+        }
+        gender_value = gender_map.get(character['gender'], 'неизвестно')  # Fallback для неизвестного пола
+
+        if gender_value == 'неизвестно':
+            logger.warning(f"Invalid gender value for chat {chat_id}: {character['gender']}")
+            await utils.answer(message, "⚠️ Ошибка: неизвестный пол персонажа. Пожалуйста, пересоздай персонажа (.setchar или .randchar).")
+            return
+
         # Используем пользовательский промт, если он есть, иначе стандартный из переменной prompt
         custom_prompt = self.prompts.get(chat_id)
         if custom_prompt:
@@ -635,7 +665,7 @@ class AIModule(loader.Module):
                 country=character['country'],
                 age=character['age'],
                 balance=character['balance'],
-                gender='девушка' if character['gender'] == 'female' else 'парень',
+                gender=gender_value,
                 action=args
             )
         else:
@@ -652,7 +682,7 @@ class AIModule(loader.Module):
                 country=character['country'],
                 age=character['age'],
                 balance=character['balance'],
-                gender='девушка' if character['gender'] == 'female' else 'парень',
+                gender=gender_value,
                 action=args
             )
 
@@ -752,6 +782,19 @@ class AIModule(loader.Module):
         season = random.choice(["Лето", "Осень", "Зима", "Весна"])
         day_cycle = self.get_day_cycle()
             
+        # Маппинг значений пола для обработки возможных ошибок
+        gender_map = {
+            'female': 'девушка',
+            'male': 'парень',
+            'Женский Пол': 'девушка',
+            'Мужской Пол': 'парень'
+        }
+        gender_value = gender_map.get(character['gender'], 'неизвестно')  # Fallback для неизвестного пола
+
+        if gender_value == 'неизвестно':
+            logger.warning(f"Invalid gender value for chat {chat_id}: {character['gender']}")
+            return
+        
         # Используем пользовательский промт, если он есть, иначе стандартный из переменной prompt
         custom_prompt = self.prompts.get(chat_id)
         if custom_prompt:
@@ -768,7 +811,7 @@ class AIModule(loader.Module):
                 country=character['country'],
                 age=character['age'],
                 balance=character['balance'],
-                gender='девушка' if character['gender'] == 'female' else 'парень',
+                gender=gender_value,
                 action=message.text
             )
         else:
@@ -785,7 +828,7 @@ class AIModule(loader.Module):
                 country=character['country'],
                 age=character['age'],
                 balance=character['balance'],
-                gender='девушка' if character['gender'] == 'female' else 'парень',
+                gender=gender_value,
                 action=message.text
             )
         
