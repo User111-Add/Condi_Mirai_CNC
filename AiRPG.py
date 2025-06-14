@@ -2,11 +2,18 @@ import logging
 import random
 import asyncio
 from datetime import datetime
-import google.generativeai as genai
 from .. import loader, utils
-from ..inline.types import InlineCall, BotInlineMessage
+from ..inline.types import InlineCall
 
 logger = logging.getLogger(__name__)
+
+try:
+    import google.generativeai as genai
+except ImportError:
+    logger.error("Google Generative AI not installed! Installing...")
+    import os
+    os.system("pip install google-generativeai")
+    import google.generativeai as genai
 
 # Конфигурация Gemini AI
 GEMINI_API_KEY = "AIzaSyBDB9kaZ-VF3zT_NZO1WoW2YFlxtAHtcTI"  # Замените на ваш ключ
@@ -38,19 +45,14 @@ class AIModule(loader.Module):
         )
     }
 
-    def __init__(self):
-        self.config = loader.ModuleConfig(
-            loader.ConfigValue(
-                "gemini_api_key",
-                GEMINI_API_KEY,
-                "API ключ для Gemini AI",
-                validator=loader.validators.String()
-            )
-        )
-        self.enabled_chats = []
-        self.ask_all_chats = []
-        self.characters = {}
-        self.chat_memory = {}
+    async def client_ready(self, client, db):
+        self._client = client
+        self.db = db
+        self.enabled_chats = self.db.get(self.strings["name"], "enabled_chats", [])
+        self.ask_all_chats = self.db.get(self.strings["name"], "ask_all_chats", [])
+        self.characters = self.db.get(self.strings["name"], "characters", {})
+        self.chat_memory = self.db.get(self.strings["name"], "chat_memory", {})
+        
         self.emojis = [
             "👧", "👧🏻", "👧🏼", "👧🏽", "👧🏾", "👧🏿", "👩", "👩🏻", "👩🏼", "👩🏽", "👩🏾", "👩🏿",
             "👱‍♀️", "👱🏻‍♀️", "👱🏼‍♀️", "👱🏽‍♀️", "👱🏾‍♀️", "👱🏿‍♀️"
@@ -74,14 +76,13 @@ class AIModule(loader.Module):
         self.male_names = ["Алексей", "Дмитрий", "Иван", "Андрей", "Сергей", "Михаил", "Артем"]
         self.surnames = ["Иванова", "Петрова", "Сидорова", "Ковалёв", "Смирнов", "Попов", "Васильев"]
         self.patronymics = ["Сергеевна", "Алексеевна", "Дмитриевна", "Иванович", "Петрович", "Сергеевич"]
-        self.current_time = datetime.now()
-        self.weather = random.choice(["Пасмурно", "Дождь", "Солнечно"])
-        self.temperature = random.randint(-30, 40)
-        self.season = random.choice(["Лето", "Осень", "Зима", "Весна"])
-        self.day_cycle = self.get_day_cycle()
+        
+        me = await client.get_me()
+        await client.send_message(me.id, self.strings["welcome"])
 
     def get_day_cycle(self):
-        hour = self.current_time.hour
+        current_time = datetime.now()
+        hour = current_time.hour
         if 6 <= hour < 9:
             return "Утро"
         elif 9 <= hour < 14:
@@ -97,7 +98,7 @@ class AIModule(loader.Module):
 
     async def generate_response(self, chat_id, prompt):
         memory = self.chat_memory.get(str(chat_id), [])
-        messages = [{"role": msg["role"], "parts": [{"text": msg["content"]}]} for msg in memory]
+        messages = [{"role": msg["role"], "parts": [{"text": msg["content"]}] for msg in memory]
         messages.append({"role": "user", "parts": [{"text": prompt}]})
         
         try:
@@ -109,7 +110,7 @@ class AIModule(loader.Module):
         
         self.chat_memory.setdefault(str(chat_id), []).append({"role": "user", "content": prompt})
         self.chat_memory[str(chat_id)].append({"role": "model", "content": message_content})
-        self.db.set(__name__, "chat_memory", self.chat_memory)
+        self.db.set(self.strings["name"], "chat_memory", self.chat_memory)
         return message_content
 
     def generate_random_character(self, gender):
@@ -188,7 +189,7 @@ class AIModule(loader.Module):
     async def input_name(self, call: InlineCall, chat_id):
         await call.delete()
         await call.answer("Введи имя, фамилию, отчество через пробел")
-        with self.conversation(call) as conv:
+        async with self.conversation(call) as conv:
             response = await conv.get_response()
             parts = response.text.split()
             if len(parts) < 3:
@@ -206,13 +207,13 @@ class AIModule(loader.Module):
                 "balance": random.randint(0, 10000),
                 "alive": True
             })
-            self.db.set(__name__, "characters", self.characters)
+            self.db.set(self.strings["name"], "characters", self.characters)
             await response.reply(self.strings["char_set"].format(**self.characters[chat_id]))
 
     async def random_char(self, call: InlineCall, chat_id):
         gender = self.characters.get(chat_id, {}).get("gender", random.choice(["female", "male"]))
         self.characters[chat_id] = self.generate_random_character(gender)
-        self.db.set(__name__, "characters", self.characters)
+        self.db.set(self.strings["name"], "characters", self.characters)
         await call.edit(self.strings["char_set"].format(**self.characters[chat_id]))
 
     async def randcharcmd(self, message):
@@ -220,7 +221,7 @@ class AIModule(loader.Module):
         chat_id = str(utils.get_chat_id(message))
         gender = random.choice(["female", "male"])
         self.characters[chat_id] = self.generate_random_character(gender)
-        self.db.set(__name__, "characters", self.characters)
+        self.db.set(self.strings["name"], "characters", self.characters)
         await utils.answer(message, self.strings["char_set"].format(**self.characters[chat_id]))
 
     async def aicmd(self, message):
@@ -240,8 +241,15 @@ class AIModule(loader.Module):
             await utils.answer(message, "💀 Персонаж мёртв! Создай нового (.setchar или .randchar).")
             return
 
+        # Обновляем контекст каждый раз
+        current_time = datetime.now()
+        weather = random.choice(["Пасмурно", "Дождь", "Солнечно"])
+        temperature = random.randint(-30, 40)
+        season = random.choice(["Лето", "Осень", "Зима", "Весна"])
+        day_cycle = self.get_day_cycle()
+
         prompt = (
-            f"[Среда: {self.season}, {self.weather}, {self.temperature}°C, {self.day_cycle}]\n"
+            f"[Среда: {season}, {weather}, {temperature}°C, {day_cycle}]\n"
             f"[{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}]\n"
             f"Характер: {character['trait']}\n"
             f"Страна: {character['country']}\n"
@@ -261,7 +269,7 @@ class AIModule(loader.Module):
         chat_id = str(utils.get_chat_id(message))
         if chat_id not in self.enabled_chats:
             self.enabled_chats.append(chat_id)
-            self.db.set(__name__, "enabled_chats", self.enabled_chats)
+            self.db.set(self.strings["name"], "enabled_chats", self.enabled_chats)
         await utils.answer(message, self.strings["ai_on"])
 
     async def aioffcmd(self, message):
@@ -269,10 +277,10 @@ class AIModule(loader.Module):
         chat_id = str(utils.get_chat_id(message))
         if chat_id in self.enabled_chats:
             self.enabled_chats.remove(chat_id)
-            self.db.set(__name__, "enabled_chats", self.enabled_chats)
+            self.db.set(self.strings["name"], "enabled_chats", self.enabled_chats)
         if chat_id in self.ask_all_chats:
             self.ask_all_chats.remove(chat_id)
-            self.db.set(__name__, "ask_all_chats", self.ask_all_chats)
+            self.db.set(self.strings["name"], "ask_all_chats", self.ask_all_chats)
         await utils.answer(message, self.strings["ai_off"])
 
     async def askalloncmd(self, message):
@@ -281,7 +289,7 @@ class AIModule(loader.Module):
         if chat_id in self.enabled_chats:
             if chat_id not in self.ask_all_chats:
                 self.ask_all_chats.append(chat_id)
-                self.db.set(__name__, "ask_all_chats", self.ask_all_chats)
+                self.db.set(self.strings["name"], "ask_all_chats", self.ask_all_chats)
             await utils.answer(message, self.strings["ask_all_on"])
         else:
             await utils.answer(message, "❌ Сначала включи ИИ (.aion)")
@@ -291,7 +299,7 @@ class AIModule(loader.Module):
         chat_id = str(utils.get_chat_id(message))
         if chat_id in self.ask_all_chats:
             self.ask_all_chats.remove(chat_id)
-            self.db.set(__name__, "ask_all_chats", self.ask_all_chats)
+            self.db.set(self.strings["name"], "ask_all_chats", self.ask_all_chats)
         await utils.answer(message, self.strings["ask_all_off"])
 
     async def statuscmd(self, message):
@@ -301,6 +309,14 @@ class AIModule(loader.Module):
             await utils.answer(message, self.strings["char_error"])
             return
         character = self.characters[chat_id]
+        
+        # Обновляем контекст
+        current_time = datetime.now()
+        weather = random.choice(["Пасмурно", "Дождь", "Солнечно"])
+        temperature = random.randint(-30, 40)
+        season = random.choice(["Лето", "Осень", "Зима", "Весна"])
+        day_cycle = self.get_day_cycle()
+        
         status = (
             f"{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}\n"
             f"Пол: {'♀️' if character['gender'] == 'female' else '♂️'}\n"
@@ -309,7 +325,7 @@ class AIModule(loader.Module):
             f"Возраст: {character['age']}\n"
             f"Баланс: {character['balance']} руб.\n"
             f"Состояние: {'Жив' if character['alive'] else 'Мёртв'}\n"
-            f"Среда: {self.season}, {self.weather}, {self.temperature}°C, {self.day_cycle}"
+            f"Среда: {season}, {weather}, {temperature}°C, {day_cycle}"
         )
         await utils.answer(message, status)
 
@@ -328,9 +344,16 @@ class AIModule(loader.Module):
         character = self.characters[chat_id]
         if not character.get("alive", False):
             return
+        
+        # Обновляем контекст
+        current_time = datetime.now()
+        weather = random.choice(["Пасмурно", "Дождь", "Солнечно"])
+        temperature = random.randint(-30, 40)
+        season = random.choice(["Лето", "Осень", "Зима", "Весна"])
+        day_cycle = self.get_day_cycle()
             
         prompt = (
-            f"[Среда: {self.season}, {self.weather}, {self.temperature}°C, {self.day_cycle}]\n"
+            f"[Среда: {season}, {weather}, {temperature}°C, {day_cycle}]\n"
             f"[{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}]\n"
             f"Характер: {character['trait']}\n"
             f"Страна: {character['country']}\n"
@@ -343,13 +366,3 @@ class AIModule(loader.Module):
         )
         response = await self.generate_response(chat_id, prompt)
         await message.reply(f"{character['emoji']} {response}")
-
-    async def client_ready(self, client, db):
-        self._client = client
-        self.db = db
-        self.enabled_chats = self.db.get(__name__, "enabled_chats", [])
-        self.ask_all_chats = self.db.get(__name__, "ask_all_chats", [])
-        self.characters = self.db.get(__name__, "characters", {})
-        self.chat_memory = self.db.get(__name__, "chat_memory", {})
-        me = await client.get_me()
-        await client.send_message(me.id, self.strings["welcome"])
