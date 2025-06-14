@@ -41,7 +41,6 @@ class AIModule(loader.Module):
     }
 
     def __init__(self):
-        self.db = self._db
         self.config = loader.ModuleConfig(
             loader.ConfigValue(
                 "gemini_api_key",
@@ -50,10 +49,10 @@ class AIModule(loader.Module):
                 validator=loader.validators.String()
             )
         )
-        self.enabled_chats = self.db.get(self.name, "enabled_chats", set())
-        self.ask_all_chats = self.db.get(self.name, "ask_all_chats", set())
-        self.characters = self.db.get(self.name, "characters", {})
-        self.chat_memory = self.db.get(self.name, "chat_memory", {})
+        self.enabled_chats = set()
+        self.ask_all_chats = set()
+        self.characters = {}
+        self.chat_memory = {}
         self.emojis = [
             "👧", "👧🏻", "👧🏼", "👧🏽", "👧🏾", "👧🏿", "👩", "👩🏻", "👩🏼", "👩🏽", "👩🏾", "👩🏿",
             "👱‍♀️", "👱🏻‍♀️", "👱🏼‍♀️", "👱🏽‍♀️", "👱🏾‍♀️", "👱🏿‍♀️"
@@ -135,7 +134,7 @@ class AIModule(loader.Module):
         form = [
             [
                 {"text": "Женский пол ♀️", "callback": self.set_gender, "args": ("female", chat_id)},
-                {"text": "Мужской пол ♂️", "callback": self.set_gender, "args": ("male", chat_id)}
+                {"text": "Мужской пол ♂️", "callback": "male": self.set_gender, "args": ("male", chat_id)}
             ],
             [{"text": "Случайный выбор", "callback": self.random_char, "args": (chat_id,)}]
         ]
@@ -304,5 +303,9 @@ class AIModule(loader.Module):
 
     async def client_ready(self, client, db):
         self._client = client
-        self._db = db
+        self.db = db  # Используем переданную базу данных
+        self.enabled_chats = self.db.get(self.name, "enabled_chats", set())
+        self.ask_all_chats = self.db.get(self.name, "ask_all_chats", set())
+        self.characters = self.db.get(self.name, "characters", {})
+        self.chat_memory = self.db.get(self.name, "chat_memory", {})
         await utils.answer(self._client, self.strings["welcome"], chat_id=(await self._client.get_me()).id)
