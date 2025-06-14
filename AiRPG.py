@@ -502,6 +502,13 @@ class GeminiGirlMod(loader.Module):
             await message.reply("❌ Укажите текст вопроса после команды")
             return
             
+        # Индикатор набора текста
+        await asyncio.sleep(self.config["TYPING_DELAY"])
+        await self._client(SetTypingRequest(
+            peer=await self._client.get_input_entity(message.chat_id),
+            action=SendMessageTypingAction()
+        ))
+            
         # Генерация ответа
         response = await self.generate_response(message, direct_query=args)
         await self.send_long_message(message, response)
@@ -509,40 +516,52 @@ class GeminiGirlMod(loader.Module):
     @loader.watcher()
     async def watcher(self, message: Message):
         try:
+            # Пропускаем свои сообщения и служебные
             if message.out or not message.text or message.sender_id == self._me.id:
                 return
             
+            # Основные переменные
             chat_id = message.chat_id
             user_id = message.sender_id
             is_private = message.is_private
             
+            # Проверка доступа пользователя
             if not self.is_user_allowed(user_id):
                 return
                 
+            # Проверка активности чата
             if not self.is_chat_active(chat_id):
                 return
                 
+            # Проверка прав бота в чате (кроме ЛС)
             if not is_private and not await self.is_admin(chat_id):
                 return
                 
+            # Проверяем условия ответа
             should_reply = False
             
+            # 1. Личные сообщения
             if is_private and self.config["AUTO_PM"]:
                 should_reply = True
             
+            # 2. Групповые чаты
             elif not is_private:
+                # Проверка упоминаний
                 if self.config["GROUP_MENTION"] and self._me.username:
                     if f"@{self._me.username}" in message.text:
                         should_reply = True
                     elif str(self._me.id) in message.text:
                         should_reply = True
                 
+                # Проверка реплаев
                 if not should_reply and self.config["GROUP_REPLY"] and message.reply_to_msg_id:
                     reply_msg = await message.get_reply_message()
                     if reply_msg.sender_id == self._me.id:
                         should_reply = True
             
+            # Генерация и отправка ответа
             if should_reply:
+                logger.info(f"Обработка сообщения от {user_id}")
                 response = await self.generate_response(message)
                 await self.send_long_message(message, response)
                 
@@ -552,3 +571,21 @@ class GeminiGirlMod(loader.Module):
             logger.warning(f"Ошибка флуда: {e.seconds} сек")
         except Exception as e:
             logger.exception("Ошибка обработки сообщения")
+
+# Регистрация команды .ask в списке команд
+GeminiGirlMod.commands = [
+    loader.Command(allowadd, "allowadd", "Добавить пользователя в белый список"),
+    loader.Command(allowremove, "allowremove", "Удалить пользователя из белого списка"),
+    loader.Command(ask, "ask", "Задать прямой вопрос ИИ (без истории)"),
+    loader.Command(blockadd, "blockadd", "Добавить пользователя в чёрный список"),
+    loader.Command(blocklist, "blocklist", "Показать чёрный список"),
+    loader.Command(blockremove, "blockremove", "Удалить пользователя из чёрного списка"),
+    loader.Command(clearmem, "clearmem", "Очистить память в текущем чате"),
+    loader.Command(debugme, "debugme", "Диагностика доступности"),
+    loader.Command(girlall, "girlall", "Активировать/деактивировать ВЕЗДЕ"),
+    loader.Command(girloff, "girloff", "Деактивировать в текущем чате"),
+    loader.Command(girlon, "girlon", "Активировать в текущем чате"),
+    loader.Command(girlstatus, "girlstatus", "Показать статус модуля"),
+    loader.Command(setkey, "setkey", "Установить API ключ"),
+    loader.Command(summarize, "summarize", "Суммаризировать историю диалога"),
+                                            ]
