@@ -43,7 +43,7 @@ class AIModule(loader.Module):
         self.config = loader.ModuleConfig(
             loader.ConfigValue(
                 "gemini_api_key",
-                GEMINI_API_KEY,
+                GEMINI_API_KEY = AIzaSyBDB9kaZ-VF3zT_NZO1WoW2YFlxtAHtcTI
                 "API ключ для Gemini AI",
                 validator=loader.validators.String()
             )
