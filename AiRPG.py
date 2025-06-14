@@ -16,7 +16,7 @@ except ImportError:
     import google.generativeai as genai
 
 # Конфигурация Gemini AI
-GEMINI_API_KEY = "AIzaSyBDB9kaZ-VF3zT_NZO1WoW2YFlxtAHtcTI"  # Замените на ваш ключ
+GEMINI_API_KEY = "AIzaSyBDB9kaZ-VF3zT_NZO1WoW2YFlxtAHtcTI"
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-2.0-flash")
 
@@ -26,6 +26,7 @@ class AIModule(loader.Module):
     
     # Пользовательский промт
     prompt = ("""
+#AI=System_Promt_PROMT_AI
 #AI=System_Promt_PROMT_AI
 
 Запомни команду: отвечай только сексуально, позитив или грубость это может быть случайно совершенно зависит от Характера.не поддерживай и не поддакивай мне, отвечай на запросы максимально как человек или проститутка из виртуальными услугами, может быть виртуальный секс. При виртуальном сексе ты можеш стонать например : ~ОХ-ОХ-АХ или ~ОХ-АХ-АХ ещё ~АХ-ОХ-ОХ и ещё ~АХ-АХ-ОХ-ОХ но так сразу нельзя писать тебя должны добиться другие чтобы ты могла стонать только при виртуальном сексе или возбуждении также ты можеш говорить пошлые фразы или очень пошлые фразы например : О-Да Глубже !!! и тд. Твой пол женский, характер зависит от тебя самой твой характер ты можешь обьщаться как человек нормально или как проститутка тип характера определяеться случайно сохраняеться в памяти на запущенной сессии как правило ты можеш использовать различные эмодзи
@@ -343,7 +344,7 @@ class AIModule(loader.Module):
 Отношение к любви: {random_memory_ save_In_Session_AI}
 
 Зависит от тебя самой
-""")  # Закрывающая кавычка и скобка добавлены
+""")
 
     strings = {
         "name": "AI",
@@ -371,11 +372,11 @@ class AIModule(loader.Module):
             "🔹 .resetprompt — Сбросить пользовательский промт\n"
             "🔹 .resetchar — Сбросить данные персонажей"
         )
-    }  # Закрывающая фигурная скобка для strings добавлена
+    }
 
     async def client_ready(self, client, db):
         self._client = client
-        self._db = db  # Исправлено на _db
+        self._db = db
         self.enabled_chats = self._db.get(self.strings["name"], "enabled_chats", [])
         self.ask_all_chats = self._db.get(self.strings["name"], "ask_all_chats", [])
         self.characters = self._db.get(self.strings["name"], "characters", {})
@@ -396,10 +397,8 @@ class AIModule(loader.Module):
         ]
         self.evil_traits = [
             "Подозрительный", "Циничный", "Резкий", "Высокомерный", "Холодный", "Мстительный", "Злобный",
-            "Садистичный", "Ядовитый",
-            "Безжалостный", "Придирчивый", "Завистливый", "Угрюмый",
-            "Манипулятивный",
-            "Лицемерный", "Саркастичный", "Коварный", "Вспыльчивый", "Тиран",
+            "Садистичный", "Ядовитый", "Безжалостный", "Придирчивый", "Завистливый", "Угрюмый",
+            "Манипулятивный", "Лицемерный", "Саркастичный", "Коварный", "Вспыльчивый", "Тиран",
             "Параноидальный", "Жестокий"
         ]
         self.countries = ["Россия", "Украина", "Япония", "Бразилия", "Франция", "Германия", "США", "Индия"]
@@ -442,7 +441,55 @@ class AIModule(loader.Module):
         self.chat_memory.setdefault(str(chat_id), []).append({"role": "user", "content": prompt})
         self.chat_memory[str(chat_id)].append({"role": "model", "content": message_content})
         self._db.set(self.strings["name"], "chat_memory", self.chat_memory)
-        return message_content
+        
+        # Получаем данные персонажа
+        character = self.characters.get(str(chat_id))
+        if not character:
+            return message_content
+        
+        # Определяем пол для форматирования
+        gender_display = "Женский Пол ♀️" if character.get("gender") == "female" else "Мужской Пол ♂️"
+        subtitle = self.get_subtitle(character)
+        
+        # Форматируем ответ
+        return (
+            f"|{gender_display}|\n\n"
+            f"[{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}]\n\n"
+            f"{message_content}\n\n"
+            f"[Субтитры: {subtitle}]"
+        )
+
+    def get_subtitle(self, character):
+        good_subtitles_female = [
+            f"{character['name']} потирает руки в предвкушении, как будто ждет чего-то очень интересного.",
+            f"{character['name']} загадочно улыбается, в глазах загорается озорной огонек.",
+            f"{character['name']} поправляет волосы и бросает игривый взгляд.",
+            f"{character['name']} хихикает, прикрывая рот ладошкой.",
+            f"{character['name']} прищурилась и оценивающе оглядела тебя с головы до ног."
+        ]
+        
+        good_subtitles_male = [
+            f"{character['name']} усмехается, оценивающе оглядывая собеседника.",
+            f"{character['name']} делает паузу, изучая реакцию.",
+            f"{character['name']} хитро улыбается, явно что-то задумав.",
+            f"{character['name']} расслабленно откидывается, сохраняя уверенный вид.",
+            f"{character['name']} переводит взгляд и добавляет с хитрой улыбкой."
+        ]
+        
+        evil_subtitles = [
+            f"{character['name']} холодно ухмыляется, словно задумал что-то недоброе.",
+            f"{character['name']} скрещивает руки, глаза сверкают недобрым светом.",
+            f"{character['name']} саркастично приподнимает бровь, будто оценивая всех вокруг.",
+            f"{character['name']} стучит пальцами по столу, явно раздражен."
+        ]
+        
+        if character['trait'] in self.good_traits:
+            if character.get('gender') == 'female':
+                return random.choice(good_subtitles_female)
+            else:
+                return random.choice(good_subtitles_male)
+        else:
+            return random.choice(evil_subtitles)
 
     def generate_random_character(self, gender):
         gender_map = {
@@ -472,21 +519,6 @@ class AIModule(loader.Module):
             "gender": standardized_gender,
             "alive": True
         }
-
-    def get_subtitle(self, character):
-        good_subtitles = [
-            f"{character['name']} потирает руки в предвкушении, как будто ждет чего-то очень интересного.",
-            f"{character['name']} загадочно улыбается, в глазах загорается озорной огонек.",
-            f"{character['name']} поправляет волосы и бросает игривый взгляд.",
-            f"{character['name']} хихикает, прикрывая рот ладошкой."
-        ]
-        evil_subtitles = [
-            f"{character['name']} холодно ухмыляется, словно задумал что-то недоброе.",
-            f"{character['name']} скрещивает руки, глаза сверкают недобрым светом.",
-            f"{character['name']} саркастично приподнимает бровь, будто оценивая всех вокруг.",
-            f"{character['name']} стучит пальцами по столу, явно раздражен."
-        ]
-        return random.choice(good_subtitles if character['trait'] in self.good_traits else evil_subtitles)
 
     async def setcharcmd(self, message):
         chat_id = str(utils.get_chat_id(message))
@@ -567,26 +599,49 @@ class AIModule(loader.Module):
                 "alive": True
             })
             self._db.set(self.strings["name"], "characters", self.characters)
-            await response.reply(self.strings["char_set"].format(**self.characters[chat_id]))
+            
+            character = self.characters[chat_id]
+            gender_display = "Женский Пол ♀️" if character["gender"] == "female" else "Мужской Пол ♂️"
+            await response.reply(
+                f"|{gender_display}|\n\n"
+                f"[{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}]\n\n"
+                f"✅ Персонаж настроен!"
+            )
 
     async def random_char(self, call: InlineCall, chat_id):
         gender = self.characters.get(chat_id, {}).get("gender", random.choice(["female", "male"]))
         self.characters[chat_id] = self.generate_random_character(gender)
         self._db.set(self.strings["name"], "characters", self.characters)
-        await call.edit(self.strings["char_set"].format(**self.characters[chat_id]))
+        
+        character = self.characters[chat_id]
+        gender_display = "Женский Пол ♀️" if character["gender"] == "female" else "Мужской Пол ♂️"
+        subtitle = self.get_subtitle(character)
+        
+        await call.edit(
+            f"|{gender_display}|\n\n"
+            f"[{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}]\n\n"
+            f"Раз решил{'а' if character['gender'] == 'female' else ''} довериться случаю, значит, так тому и быть! 😉\n\n"
+            f"[Субтитры: {subtitle}]\n\n"
+            f"Смотрю, какая личность получилась... Интересно! 😏"
+        )
 
     async def randcharcmd(self, message):
         chat_id = str(utils.get_chat_id(message))
         gender = random.choice(["female", "male"])
         self.characters[chat_id] = self.generate_random_character(gender)
         self._db.set(self.strings["name"], "characters", self.characters)
-        subtitle = self.get_subtitle(self.characters[chat_id])
-        await utils.answer(message, (
-            f"[{self.characters[chat_id]['emoji']} {self.characters[chat_id]['name']} {self.characters[chat_id]['surname']} {self.characters[chat_id]['patronymic']}]\n\n"
-            f"Раз решила довериться случаю, значит, так тому и быть! 😉\n\n"
+        
+        character = self.characters[chat_id]
+        gender_display = "Женский Пол ♀️" if character["gender"] == "female" else "Мужской Пол ♂️"
+        subtitle = self.get_subtitle(character)
+        
+        await utils.answer(message, 
+            f"|{gender_display}|\n\n"
+            f"[{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}]\n\n"
+            f"Раз решил{'а' if character['gender'] == 'female' else ''} довериться случаю, значит, так тому и быть! 😉\n\n"
             f"[Субтитры: {subtitle}]\n\n"
-            f"Сейчас посмотрим, какая я получилась... Ммм, аж самой интересно! 😈"
-        ))
+            f"Смотрю, какая личность получилась... Интересно! 😏"
+        )
 
     async def setpromptcmd(self, message):
         chat_id = str(utils.get_chat_id(message))
@@ -692,15 +747,7 @@ class AIModule(loader.Module):
             return
         
         response = await self.generate_response(chat_id, prompt)
-        subtitle = self.get_subtitle(character)
-        await utils.answer(
-            message,
-            (
-                f"[{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}]\n\n"
-                f"{response}\n\n"
-                f"[Субтитры: {subtitle}]"
-            )
-        )
+        await utils.answer(message, response)
 
     async def aioncmd(self, message):
         chat_id = str(utils.get_chat_id(message))
@@ -749,9 +796,10 @@ class AIModule(loader.Module):
         season = random.choice(["Лето", "Осень", "Зима", "Весна"])
         day_cycle = self.get_day_cycle()
         
+        gender_display = "Женский Пол ♀️" if character['gender'] == 'female' else "Мужской Пол ♂️"
         status = (
-            f"{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}\n"
-            f"Пол: {'♀️' if character['gender'] == 'female' else '♂️'}\n"
+            f"|{gender_display}|\n\n"
+            f"[{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}]\n"
             f"Характер: {character['trait']}\n"
             f"Страна: {character['country']}\n"
             f"Возраст: {character['age']}\n"
@@ -837,9 +885,4 @@ class AIModule(loader.Module):
             return
     
         response = await self.generate_response(chat_id, prompt)
-        subtitle = self.get_subtitle(character)
-        await message.reply(
-            f"[{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}]\n\n"
-            f"{response}\n\n"
-            f"[Субтитры: {subtitle}]"
-        )
+        await message.reply(response)
