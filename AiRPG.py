@@ -23,6 +23,14 @@ model = genai.GenerativeModel("gemini-2.0-flash")
 @loader.tds
 class AIModule(loader.Module):
     """Модуль ИИ с ролевой игрой для Hikka Userbot"""
+    
+    # Пользовательский промт, который можно заменить в коде
+    prompt = (
+        "Ты — {name}, {gender} из {country}, тебе {age} лет, твой характер — {trait}. "
+        "Сегодня {season}, {weather}, {temperature}°C, {day_cycle}. "
+        "Реагируй на '{action}' в стиле дерзкой рок-звезды, используй яркие эмоции и сарказм!"
+    )
+
     strings = {
         "name": "AI",
         "welcome": "🌟 Привет, я готова к игре! Хочешь настроить персонажа вручную или случайный выбор? (.setchar или .randchar)",
@@ -32,6 +40,8 @@ class AIModule(loader.Module):
         "ai_off": "🛑 ИИ выключен в этом чате.",
         "ask_all_on": "🌐 ИИ будет отвечать всем в чате!",
         "ask_all_off": "🔇 Режим ответов всем отключен.",
+        "prompt_set": "✅ Пользовательский промт установлен!",
+        "prompt_reset": "✅ Промт сброшен к стандартному!",
         "help": (
             "📖 Команды модуля AI:\n"
             "🔹 .setchar — Настроить персонажа вручную\n"
@@ -41,7 +51,9 @@ class AIModule(loader.Module):
             "🔹 .aioff — Выключить ИИ в чате\n"
             "🔹 .askallon — ИИ отвечает всем в чате\n"
             "🔹 .askalloff — Отключить ответы всем\n"
-            "🔹 .status — Показать текущий статус персонажа"
+            "🔹 .status — Показать текущий статус персонажа\n"
+            "🔹 .setprompt <текст> — Установить пользовательский промт\n"
+            "🔹 .resetprompt — Сбросить пользовательский промт"
         )
     }
 
@@ -52,6 +64,7 @@ class AIModule(loader.Module):
         self.ask_all_chats = self.db.get(self.strings["name"], "ask_all_chats", [])
         self.characters = self.db.get(self.strings["name"], "characters", {})
         self.chat_memory = self.db.get(self.strings["name"], "chat_memory", {})
+        self.prompts = self.db.get(self.strings["name"], "prompts", {})  # Хранилище пользовательских промтов
         
         self.emojis = [
             "👧", "👧🏻", "👧🏼", "👧🏽", "👧🏾", "👧🏿", "👩", "👩🏻", "👩🏼", "👩🏽", "👩🏾", "👩🏿",
@@ -134,6 +147,22 @@ class AIModule(loader.Module):
             "gender": gender,
             "alive": True
         }
+
+    def get_subtitle(self, character):
+        """Генерирует случайные сабтитры в зависимости от характера персонажа"""
+        good_subtitles = [
+            f"{character['name']} потирает руки в предвкушении, как будто ждет чего-то очень интересного.",
+            f"{character['name']} загадочно улыбается, в глазах загорается озорной огонек.",
+            f"{character['name']} поправляет волосы и бросает игривый взгляд.",
+            f"{character['name']} хихикает, прикрывая рот ладошкой."
+        ]
+        evil_subtitles = [
+            f"{character['name']} холодно ухмыляется, словно задумал что-то недоброе.",
+            f"{character['name']} скрещивает руки, глаза сверкают недобрым светом.",
+            f"{character['name']} саркастично приподнимает бровь, будто оценивая всех вокруг.",
+            f"{character['name']} стучит пальцами по столу, явно раздражен."
+        ]
+        return random.choice(good_subtitles if character['trait'] in self.good_traits else evil_subtitles)
 
     async def setcharcmd(self, message):
         """Настроить персонажа вручную через инлайн-форму"""
@@ -222,7 +251,33 @@ class AIModule(loader.Module):
         gender = random.choice(["female", "male"])
         self.characters[chat_id] = self.generate_random_character(gender)
         self.db.set(self.strings["name"], "characters", self.characters)
-        await utils.answer(message, self.strings["char_set"].format(**self.characters[chat_id]))
+        subtitle = self.get_subtitle(self.characters[chat_id])
+        await utils.answer(message, (
+            f"[{self.characters[chat_id]['emoji']} {self.characters[chat_id]['name']} {self.characters[chat_id]['surname']} {self.characters[chat_id]['patronymic']}]\n\n"
+            f"Раз решила довериться случаю, значит, так тому и быть! 😉\n\n"
+            f"[Субтитры: {subtitle}]\n\n"
+            f"Сейчас посмотрим, какая я получилась... Ммм, аж самой интересно! 😈"
+        ))
+
+    async def setpromptcmd(self, message):
+        """Установить пользовательский промт"""
+        chat_id = str(utils.get_chat_id(message))
+        args = utils.get_args_raw(message)
+        if not args:
+            await utils.answer(message, "❌ Введи текст промта!")
+            return
+        
+        self.prompts[chat_id] = args
+        self.db.set(self.strings["name"], "prompts", self.prompts)
+        await utils.answer(message, self.strings["prompt_set"])
+
+    async def resetpromptcmd(self, message):
+        """Сбросить пользовательский промт"""
+        chat_id = str(utils.get_chat_id(message))
+        if chat_id in self.prompts:
+            del self.prompts[chat_id]
+            self.db.set(self.strings["name"], "prompts", self.prompts)
+        await utils.answer(message, self.strings["prompt_reset"])
 
     async def aicmd(self, message):
         """Задать вопрос ИИ"""
@@ -241,28 +296,58 @@ class AIModule(loader.Module):
             await utils.answer(message, "💀 Персонаж мёртв! Создай нового (.setchar или .randchar).")
             return
 
-        # Обновляем контекст каждый раз
+        # Обновляем контекст
         current_time = datetime.now()
         weather = random.choice(["Пасмурно", "Дождь", "Солнечно"])
         temperature = random.randint(-30, 40)
         season = random.choice(["Лето", "Осень", "Зима", "Весна"])
         day_cycle = self.get_day_cycle()
 
-        prompt = (
-            f"[Среда: {season}, {weather}, {temperature}°C, {day_cycle}]\n"
-            f"[{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}]\n"
-            f"Характер: {character['trait']}\n"
-            f"Страна: {character['country']}\n"
-            f"Возраст: {character['age']}\n"
-            f"Баланс: {character['balance']} руб.\n"
-            f"Действие: {args}\n"
-            f"Ты — {character['name']}, {'девушка' if character['gender'] == 'female' else 'парень'} с характером '{character['trait']}'. "
-            f"Отвечай в соответствии с характером, можешь быть игривой, дерзкой, сексуальной или злой, "
-            f"в зависимости от ситуации. Используй эмоции, флирт или грубость, если это подходит. "
-            f"Учитывай погоду, время суток и баланс. Реагируй на запрос как человек, без упоминания ИИ."
-        )
+        # Используем пользовательский промт, если он есть, иначе стандартный из переменной prompt
+        custom_prompt = self.prompts.get(chat_id)
+        if custom_prompt:
+            prompt = custom_prompt.format(
+                season=season,
+                weather=weather,
+                temperature=temperature,
+                day_cycle=day_cycle,
+                emoji=character['emoji'],
+                name=character['name'],
+                surname=character['surname'],
+                patronexplore = True
+                patronymic=character['patronymic'],
+                trait=character['trait'],
+                country=character['country'],
+                age=character['age'],
+                balance=character['balance'],
+                gender='девушка' if character['gender'] == 'female' else 'парень',
+                action=args
+            )
+        else:
+            prompt = self.prompt.format(
+                season=season,
+                weather=weather,
+                temperature=temperature,
+                day_cycle=day_cycle,
+                emoji=character['emoji'],
+                name=character['name'],
+                surname=character['surname'],
+                patronymic=character['patronymic'],
+                trait=character['trait'],
+                country=character['country'],
+                age=character['age'],
+                balance=character['balance'],
+                gender='девушка' if character['gender'] == 'female' else 'парень',
+                action=args
+            )
+
         response = await self.generate_response(chat_id, prompt)
-        await utils.answer(message, f"{character['emoji']} {response}")
+        subtitle = self.get_subtitle(character)
+        await utils.answer(message, (
+            f"[{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}]\n\n"
+            f"{response}\n\n"
+            f"[Субтитры: {subtitle}]"
+        ))
 
     async def aioncmd(self, message):
         """Включить ИИ в чате"""
@@ -352,17 +437,47 @@ class AIModule(loader.Module):
         season = random.choice(["Лето", "Осень", "Зима", "Весна"])
         day_cycle = self.get_day_cycle()
             
-        prompt = (
-            f"[Среда: {season}, {weather}, {temperature}°C, {day_cycle}]\n"
-            f"[{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}]\n"
-            f"Характер: {character['trait']}\n"
-            f"Страна: {character['country']}\n"
-            f"Возраст: {character['age']}\n"
-            f"Баланс: {character['balance']} руб.\n"
-            f"Сообщение: {message.text}\n"
-            f"Ты — {character['name']}, {'девушка' if character['gender'] == 'female' else 'парень'} с характером '{character['trait']}'. "
-            f"Отвечай кратко (1 предложение) в соответствии с характером, "
-            f"учитывая контекст сообщения."
-        )
+        # Используем пользовательский промт, если он есть, иначе стандартный из переменной prompt
+        custom_prompt = self.prompts.get(chat_id)
+        if custom_prompt:
+            prompt = custom_prompt.format(
+                season=season,
+                weather=weather,
+                temperature=temperature,
+                day_cycle=day_cycle,
+                emoji=character['emoji'],
+                name=character['name'],
+                surname=character['surname'],
+                patronymic=character['patronymic'],
+                trait=character['trait'],
+                country=character['country'],
+                age=character['age'],
+                balance=character['balance'],
+                gender='девушка' if character['gender'] == 'female' else 'парень',
+                action=message.text
+            )
+        else:
+            prompt = self.prompt.format(
+                season=season,
+                weather=weather,
+                temperature=temperature,
+                day_cycle=day_cycle,
+                emoji=character['emoji'],
+                name=character['name'],
+                surname=character['surname'],
+                patronymic=character['patronymic'],
+                trait=character['trait'],
+                country=character['country'],
+                age=character['age'],
+                balance=character['balance'],
+                gender='девушка' if character['gender'] == 'female' else 'парень',
+                action=message.text
+            )
+        
         response = await self.generate_response(chat_id, prompt)
-        await message.reply(f"{character['emoji']} {response}")
+        subtitle = self.get_subtitle(character)
+        await message.reply(
+            f"[{character['emoji']} {character['name']} {character['surname']} {character['patronymic']}]\n\n"
+            f"{response}\n\n"
+            f"[Субтитры: {subtitle}]"
+        )
